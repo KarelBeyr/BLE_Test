@@ -1,21 +1,25 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ESP32 LED Control</title>
+    <title>ESP32 Control Panel</title>
 </head>
 <body>
     <button id="connect">Connect to ESP32</button>
     <button id="ledon" disabled>LED ON</button>
     <button id="ledoff" disabled>LED OFF</button>
-	<button id="disconnect" disabled>Disconnect from ESP</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <button id="latencyTest" disabled>Latency Test</button>
+    <div id="latencyResult"></div>
 
     <script>
         document.getElementById('connect').addEventListener('click', function() {
             connectToESP32().then(device => {
-                console.log('Connected to device', device);
                 document.getElementById('ledon').disabled = false;
                 document.getElementById('ledoff').disabled = false;
-				document.getElementById('disconnect').disabled = false;
+                document.getElementById('disconnect').disabled = false;
+                document.getElementById('latencyTest').disabled = false;
+            }).catch(error => {
+                console.log('Connection failed', error);
             });
         });
 
@@ -28,32 +32,33 @@
         });
 
         document.getElementById('disconnect').addEventListener('click', function() {
-            if (deviceCache) {
-                disconnectFromESP();
-            }
+            disconnectFromESP();
         });
-		
+
+        document.getElementById('latencyTest').addEventListener('click', function() {
+            performLatencyTest();
+        });
+
         let deviceCache = null;
-        let characteristicCache = null;
+        let switchCharacteristicCache = null;
+        let latencyCharacteristicCache = null;
 
         async function connectToESP32() {
             if (!deviceCache) {
                 try {
                     console.log('Requesting Bluetooth Device...');
                     deviceCache = await navigator.bluetooth.requestDevice({
-                        filters: [{
-                            services: ['19b10000-e8f2-537e-4f6c-d104768a1214']
-                        }]
+                        filters: [{ services: ['19b10000-e8f2-537e-4f6c-d104768a1214'] }]
                     });
 
                     deviceCache.addEventListener('gattserverdisconnected', onDisconnected);
                 } catch (error) {
                     console.error('Failed to connect:', error);
-                    return;
+                    throw error; // Rethrow to handle in caller
                 }
             }
 
-            if (deviceCache.gatt.connected && characteristicCache) {
+            if (deviceCache.gatt.connected && switchCharacteristicCache && latencyCharacteristicCache) {
                 return deviceCache;
             }
 
@@ -62,7 +67,12 @@
                 console.log('Connected to GATT Server');
 
                 const service = await server.getPrimaryService('19b10000-e8f2-537e-4f6c-d104768a1214');
-                characteristicCache = await service.getCharacteristic('19b10001-e8f2-537e-4f6c-d104768a1214');
+                switchCharacteristicCache = await service.getCharacteristic('19b10001-e8f2-537e-4f6c-d104768a1214');
+                latencyCharacteristicCache = await service.getCharacteristic('19b10002-e8f2-537e-4f6c-d104768a1214');
+                
+                await latencyCharacteristicCache.startNotifications();
+                latencyCharacteristicCache.addEventListener('characteristicvaluechanged', handleLatencyResponse);
+                
                 return deviceCache;
             } catch (error) {
                 console.error('Failed to get service/characteristic:', error);
@@ -70,14 +80,14 @@
         }
 
         function writeToCharacteristic(value) {
-            if (!characteristicCache) {
+            if (!switchCharacteristicCache) {
                 console.log('No characteristic cache available');
                 return;
             }
 
             let data = value ? new Uint8Array([1]) : new Uint8Array([0]);
-            characteristicCache.writeValue(data).then(() => {
-                console.log('Write', value ? 'ON' : 'OFF');
+            switchCharacteristicCache.writeValue(data).then(() => {
+                console.log('LED Write', value ? 'ON' : 'OFF');
             }).catch(error => {
                 console.error('Write failed:', error);
             });
@@ -88,6 +98,7 @@
             document.getElementById('ledon').disabled = true;
             document.getElementById('ledoff').disabled = true;
             document.getElementById('disconnect').disabled = true;
+            document.getElementById('latencyTest').disabled = true;
         }
 
         function disconnectFromESP() {
@@ -96,6 +107,24 @@
             }
             console.log('Disconnecting from device');
             deviceCache.gatt.disconnect();
+        }
+
+        let latencyStartTime = 0;
+        function performLatencyTest() {
+            if (!latencyCharacteristicCache) {
+                console.log('Latency characteristic not found');
+                return;
+            }
+            latencyStartTime = performance.now();
+            latencyCharacteristicCache.writeValue(new Uint8Array([1])) // Arbitrary value to trigger response
+                .then(() => console.log('Latency test initiated'))
+                .catch(error => console.error('Latency test failed:', error));
+        }
+
+        function handleLatencyResponse(event) {
+            let latencyEndTime = performance.now();
+            let latency = latencyEndTime - latencyStartTime;
+            document.getElementById('latencyResult').innerText = `Latency: ${latency.toFixed(2)} ms`;
         }
     </script>
 </body>
