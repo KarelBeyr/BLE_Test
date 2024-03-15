@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32 LED Control</title>
+</head>
+<body>
+    <button id="connect">Connect to ESP32</button>
+    <button id="ledon" disabled>LED ON</button>
+    <button id="ledoff" disabled>LED OFF</button>
+	<button id="disconnect" disabled>Disconnect from ESP</button>
+
+    <script>
+        document.getElementById('connect').addEventListener('click', function() {
+            connectToESP32().then(device => {
+                console.log('Connected to device', device);
+                document.getElementById('ledon').disabled = false;
+                document.getElementById('ledoff').disabled = false;
+				document.getElementById('disconnect').disabled = false;
+            });
+        });
+
+        document.getElementById('ledon').addEventListener('click', function() {
+            writeToCharacteristic(true);
+        });
+
+        document.getElementById('ledoff').addEventListener('click', function() {
+            writeToCharacteristic(false);
+        });
+
+        document.getElementById('disconnect').addEventListener('click', function() {
+            if (deviceCache) {
+                disconnectFromESP();
+            }
+        });
+		
+        let deviceCache = null;
+        let characteristicCache = null;
+
+        async function connectToESP32() {
+            if (!deviceCache) {
+                try {
+                    console.log('Requesting Bluetooth Device...');
+                    deviceCache = await navigator.bluetooth.requestDevice({
+                        filters: [{
+                            services: ['19b10000-e8f2-537e-4f6c-d104768a1214']
+                        }]
+                    });
+
+                    deviceCache.addEventListener('gattserverdisconnected', onDisconnected);
+                } catch (error) {
+                    console.error('Failed to connect:', error);
+                    return;
+                }
+            }
+
+            if (deviceCache.gatt.connected && characteristicCache) {
+                return deviceCache;
+            }
+
+            try {
+                const server = await deviceCache.gatt.connect();
+                console.log('Connected to GATT Server');
+
+                const service = await server.getPrimaryService('19b10000-e8f2-537e-4f6c-d104768a1214');
+                characteristicCache = await service.getCharacteristic('19b10001-e8f2-537e-4f6c-d104768a1214');
+                return deviceCache;
+            } catch (error) {
+                console.error('Failed to get service/characteristic:', error);
+            }
+        }
+
+        function writeToCharacteristic(value) {
+            if (!characteristicCache) {
+                console.log('No characteristic cache available');
+                return;
+            }
+
+            let data = value ? new Uint8Array([1]) : new Uint8Array([0]);
+            characteristicCache.writeValue(data).then(() => {
+                console.log('Write', value ? 'ON' : 'OFF');
+            }).catch(error => {
+                console.error('Write failed:', error);
+            });
+        }
+
+        function onDisconnected(event) {
+            console.log('Device disconnected');
+            document.getElementById('ledon').disabled = true;
+            document.getElementById('ledoff').disabled = true;
+            document.getElementById('disconnect').disabled = true;
+        }
+
+        function disconnectFromESP() {
+            if (!deviceCache) {
+                return;
+            }
+            console.log('Disconnecting from device');
+            deviceCache.gatt.disconnect();
+        }
+    </script>
+</body>
+</html>
